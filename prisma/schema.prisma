@@ -1,0 +1,245 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum InvoiceStatus {
+  draft
+  submitted
+  gl_coded
+  approval_pending
+  approved
+  payment_pending
+  paid
+  rejected
+  voided
+}
+
+enum TransitionActorType {
+  user
+  system
+  agent
+  integration
+}
+
+enum VendorStatus {
+  invited
+  pending_verification
+  active
+  suspended
+}
+
+enum ApprovalWorkflowStatus {
+  pending
+  approved
+  rejected
+}
+
+enum ApprovalDecisionOutcome {
+  approved
+  rejected
+}
+
+model Tenant {
+  id            String            @id @default(cuid())
+  name          String
+  apiKeyHash    String            @map("api_key_hash")
+  webhookUrl    String?           @map("webhook_url")
+  webhookSecret String?           @map("webhook_secret")
+  settings      Json?
+  createdAt     DateTime          @default(now()) @map("created_at")
+  updatedAt     DateTime          @updatedAt @map("updated_at")
+  invoices           Invoice[]
+  webhookEvents      WebhookEvent[]
+  lineItems          InvoiceLineItem[]
+  glHistory          TenantGLHistory[]
+  approvalPolicies   ApprovalPolicy[]
+  invoiceApprovals   InvoiceApproval[]
+  stageDecisions     ApprovalStageDecision[]
+  invoiceTransitions InvoiceTransition[]
+  vendors            Vendor[]
+
+  @@map("tenants")
+}
+
+model Invoice {
+  id          String            @id @default(cuid())
+  tenantId    String            @map("tenant_id")
+  externalRef String?           @map("external_ref")
+  amountCents Int               @map("amount_cents")
+  currency    String
+  status      InvoiceStatus     @default(draft)
+  metadata    Json?
+  matchedVendorId String?          @map("matched_vendor_id")
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+  deletedAt   DateTime?         @map("deleted_at")
+
+  tenant      Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  lineItems   InvoiceLineItem[]
+  approval    InvoiceApproval?
+  transitions InvoiceTransition[]
+  matchedVendor Vendor?           @relation(fields: [matchedVendorId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, status, createdAt(sort: Desc)])
+  @@index([tenantId, deletedAt])
+  @@index([tenantId, matchedVendorId])
+  @@map("invoices")
+}
+
+model Vendor {
+  id                 String       @id @default(cuid())
+  tenantId           String       @map("tenant_id")
+  name               String
+  legalName          String?      @map("legal_name")
+  taxId              String?      @map("tax_id")
+  address            Json?
+  paymentPreferences Json?        @map("payment_preferences")
+  contacts           Json?
+  status             VendorStatus @default(invited)
+  inviteEmail        String?      @map("invite_email")
+  onboardingToken    String?      @map("onboarding_token")
+  tokenExpiresAt     DateTime?    @map("token_expires_at")
+  createdAt          DateTime     @default(now()) @map("created_at")
+  updatedAt          DateTime     @updatedAt @map("updated_at")
+
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invoices Invoice[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, name])
+  @@map("vendors")
+}
+
+model InvoiceLineItem {
+  id                String    @id @default(cuid())
+  tenantId          String    @map("tenant_id")
+  invoiceId         String    @map("invoice_id")
+  description       String
+  amountCents       Int       @map("amount_cents")
+  currency          String
+  vendor            String?
+  glCodeSuggestions Json?     @map("gl_code_suggestions")
+  glCodeAccepted    String?   @map("gl_code_accepted")
+  glLabelAccepted   String?   @map("gl_label_accepted")
+  glCodedAt         DateTime? @map("gl_coded_at")
+  acceptedAt        DateTime? @map("accepted_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, invoiceId])
+  @@map("invoice_line_items")
+}
+
+model TenantGLHistory {
+  id          String   @id @default(cuid())
+  tenantId    String   @map("tenant_id")
+  description String
+  vendor      String?
+  amountCents Int?     @map("amount_cents")
+  glCode      String   @map("gl_code")
+  glLabel     String   @map("gl_label")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@map("tenant_gl_history")
+}
+
+model WebhookEvent {
+  id          String    @id @default(cuid())
+  tenantId    String    @map("tenant_id")
+  eventType   String    @map("event_type")
+  payload     Json
+  deliveredAt DateTime? @map("delivered_at")
+  attempts    Int       @default(0)
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, deliveredAt, createdAt(sort: Desc)])
+  @@map("webhook_events")
+}
+
+model InvoiceTransition {
+  id        String              @id @default(cuid())
+  tenantId  String              @map("tenant_id")
+  invoiceId String              @map("invoice_id")
+  fromState InvoiceStatus?      @map("from_state")
+  toState   InvoiceStatus       @map("to_state")
+  actorId   String              @map("actor_id")
+  actorType TransitionActorType @map("actor_type")
+  reason    String?
+  timestamp DateTime            @default(now())
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, invoiceId, timestamp(sort: Desc)])
+  @@map("invoice_transitions")
+}
+
+model ApprovalPolicy {
+  id          String   @id @default(cuid())
+  tenantId    String   @map("tenant_id")
+  name        String
+  description String?
+  rules       Json
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  approvals InvoiceApproval[]
+
+  @@index([tenantId, isActive])
+  @@map("approval_policies")
+}
+
+model InvoiceApproval {
+  id             String                 @id @default(cuid())
+  tenantId       String                 @map("tenant_id")
+  invoiceId      String                 @unique @map("invoice_id")
+  policyId       String?                @map("policy_id")
+  stagesSnapshot Json                   @map("stages_snapshot")
+  currentStage   Int                    @default(0) @map("current_stage")
+  totalStages    Int                    @map("total_stages")
+  status         ApprovalWorkflowStatus @default(pending)
+  stageStartedAt DateTime               @default(now()) @map("stage_started_at")
+  createdAt      DateTime               @default(now()) @map("created_at")
+  updatedAt      DateTime               @updatedAt @map("updated_at")
+
+  tenant    Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invoice   Invoice                 @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  policy    ApprovalPolicy?         @relation(fields: [policyId], references: [id])
+  decisions ApprovalStageDecision[]
+
+  @@index([tenantId, status])
+  @@map("invoice_approvals")
+}
+
+model ApprovalStageDecision {
+  id         String                  @id @default(cuid())
+  tenantId   String                  @map("tenant_id")
+  approvalId String                  @map("approval_id")
+  stageIndex Int                     @map("stage_index")
+  outcome    ApprovalDecisionOutcome
+  comment    String?
+  actorType  String                  @map("actor_type")
+  actorId    String                  @map("actor_id")
+  decidedAt  DateTime                @default(now()) @map("decided_at")
+
+  approval InvoiceApproval @relation(fields: [approvalId], references: [id], onDelete: Cascade)
+  tenant   Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([approvalId, stageIndex])
+  @@index([tenantId])
+  @@map("approval_stage_decisions")
+}
