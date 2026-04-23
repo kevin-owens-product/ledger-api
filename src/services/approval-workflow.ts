@@ -136,7 +136,7 @@ async function findApplicablePolicy(
   invoice: { id: string; amountCents: number },
 ): Promise<{ policy: { id: string; rules: unknown }; stages: PolicyStage[] } | null> {
   const policies = await prisma.approvalPolicy.findMany({
-    where: { isActive: true },
+    where: { tenantId, isActive: true },
     orderBy: { createdAt: 'asc' },
   });
 

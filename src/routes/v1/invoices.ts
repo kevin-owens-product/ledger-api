@@ -42,6 +42,14 @@ export const statusTransitions: Record<InvoiceStatus, InvoiceStatus[]> = {
   voided: [],
 };
 
+const vendorSuspensionBlockedStatuses = new Set<InvoiceStatus>([
+  InvoiceStatus.gl_coded,
+  InvoiceStatus.approval_pending,
+  InvoiceStatus.approved,
+  InvoiceStatus.payment_pending,
+  InvoiceStatus.paid,
+]);
+
 export async function registerInvoiceRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.post('/v1/invoices', async (request, reply) => {
     const body = createInvoiceSchema.parse(request.body);
@@ -143,10 +151,11 @@ export async function registerInvoiceRoutes(fastify: FastifyInstance): Promise<v
 
   fastify.get('/v1/invoices/:id/history', async (request) => {
     const params = z.object({ id: z.string() }).parse(request.params);
+    const tenantId = request.auth!.tenant.id;
 
     return withTenantScope(request, async () => {
       const invoice = await prisma.invoice.findFirst({
-        where: { id: params.id, deletedAt: null },
+        where: { id: params.id, tenantId, deletedAt: null },
         select: { id: true },
       });
 
@@ -155,7 +164,7 @@ export async function registerInvoiceRoutes(fastify: FastifyInstance): Promise<v
       }
 
       const transitions = await prisma.invoiceTransition.findMany({
-        where: { invoiceId: params.id },
+        where: { invoiceId: params.id, tenantId },
         orderBy: { timestamp: 'asc' },
       });
 
@@ -194,7 +203,7 @@ export async function registerInvoiceRoutes(fastify: FastifyInstance): Promise<v
         throw new AppError('INVALID_STATUS_TRANSITION', `${invoice.status} is a terminal state`, 422);
       }
 
-      if (body.status !== InvoiceStatus.draft && body.status !== InvoiceStatus.submitted && invoice.matchedVendorId) {
+      if (vendorSuspensionBlockedStatuses.has(body.status) && invoice.matchedVendorId) {
         const vendor = await prisma.vendor.findFirst({
           where: { id: invoice.matchedVendorId },
           select: { status: true },

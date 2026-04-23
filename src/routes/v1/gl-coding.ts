@@ -13,6 +13,11 @@ const batchGLCodeSchema = z.object({
   invoiceIds: z.array(z.string()).min(1).max(50),
 });
 
+const glCodingAllowedStatuses = new Set<InvoiceStatus>([
+  InvoiceStatus.draft,
+  InvoiceStatus.submitted,
+]);
+
 async function fetchTenantContext(tenantId: string): Promise<{
   chartOfAccounts: ChartOfAccountsEntry[] | undefined;
   historyExamples: Array<{ description: string; vendor?: string; amountCents?: number; glCode: string; glLabel: string }>;
@@ -63,8 +68,10 @@ async function runGLCodingForInvoice(
   if (invoice.lineItems.length === 0) {
     throw new AppError('NO_LINE_ITEMS', 'Invoice has no line items to classify', 400);
   }
+  if (!glCodingAllowedStatuses.has(invoice.status)) {
+    throw new AppError('INVALID_INVOICE_STATE', `Cannot GL-code an invoice in ${invoice.status} state`, 422);
+  }
 
-  // Already GL coded — allow re-coding but don't error
   const { chartOfAccounts, historyExamples } = await fetchTenantContext(tenantId);
 
   const lineItemInputs = invoice.lineItems.map((item) => ({

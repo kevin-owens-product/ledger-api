@@ -35,6 +35,7 @@ const inviteSchema = z.object({
 });
 
 const onboardingSchema = z.object({
+  onboardingToken: z.string().min(1),
   taxId: z.string().min(1).max(50),
   address: z.record(z.string(), z.any()).optional(),
   paymentPreferences: z.object({
@@ -207,6 +208,15 @@ export async function registerVendorRoutes(fastify: FastifyInstance): Promise<vo
       if (!vendor) {
         throw new AppError('VENDOR_NOT_FOUND', 'Vendor not found', 404);
       }
+      if (!vendor.onboardingToken || !vendor.tokenExpiresAt) {
+        throw new AppError('ONBOARDING_NOT_AVAILABLE', 'Vendor onboarding token is missing or expired', 422);
+      }
+      if (vendor.onboardingToken !== body.onboardingToken) {
+        throw new AppError('INVALID_ONBOARDING_TOKEN', 'Invalid onboarding token', 401);
+      }
+      if (vendor.tokenExpiresAt.getTime() < Date.now()) {
+        throw new AppError('ONBOARDING_TOKEN_EXPIRED', 'Onboarding token has expired', 401);
+      }
 
       const updated = await prisma.vendor.update({
         where: { id: params.id },
@@ -216,6 +226,8 @@ export async function registerVendorRoutes(fastify: FastifyInstance): Promise<vo
           paymentPreferences: body.paymentPreferences,
           contacts: body.contacts,
           status: VendorStatus.pending_verification,
+          onboardingToken: null,
+          tokenExpiresAt: null,
         },
       });
 
